@@ -1,46 +1,75 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 const HERO = "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='400'%3E%3Crect width='800' height='400' fill='%231a5fa8'/%3E%3Ctext x='400' y='210' font-size='28' fill='white' text-anchor='middle'%3EVélo électrique pliable%3C/text%3E%3C/svg%3E"
 
-// Mission : ouvre Lighthouse (DevTools → onglet Lighthouse → Performance) et
-// corrige les 3 problèmes volontaires ci-dessous.
+const TOTAL_ITERATIONS = 400_000_000
+const CHUNK_SIZE = 2_000_000
 
 export default function App() {
   const [showBanner, setShowBanner] = useState(false)
   const [points, setPoints] = useState<number | null>(null)
+  const [enCours, setEnCours] = useState(false)
+  const timer = useRef<number | undefined>(undefined)
 
   useEffect(() => {
-    // Problème 2 (CLS) : ce bandeau apparaît après coup et pousse tout le
-    // contenu vers le bas, sans espace réservé à l'avance.
+    // CLS #2 : le bandeau est toujours dans le flux, seule son opacité change.
+    // Son apparition ne décale donc plus le contenu.
     const t = setTimeout(() => setShowBanner(true), 1200)
     return () => clearTimeout(t)
   }, [])
 
+  // Annule un calcul en cours si le composant est démonté.
+  useEffect(() => () => clearTimeout(timer.current), [])
+
   function calculerPoints() {
-    // Problème 3 (INP) : ce calcul bloque le thread principal plusieurs
-    // centaines de ms : la page devient totalement figée pendant ce temps.
+    // INP : le calcul est découpé en tranches, séparées par setTimeout(0),
+    // pour rendre la main au navigateur entre chaque tranche.
+    if (enCours) return
+    setEnCours(true)
     let total = 0
-    for (let i = 0; i < 400_000_000; i++) {
-      total += Math.sqrt(i) % 7
+    let i = 0
+
+    function step() {
+      const end = Math.min(i + CHUNK_SIZE, TOTAL_ITERATIONS)
+      for (; i < end; i++) total += Math.sqrt(i) % 7
+      if (i < TOTAL_ITERATIONS) {
+        timer.current = window.setTimeout(step, 0)
+      } else {
+        setPoints(Math.round(total % 1000))
+        setEnCours(false)
+      }
     }
-    setPoints(Math.round(total % 1000))
+    step()
   }
 
   return (
     <div className="page">
-      {showBanner && (
-        <div className="banner">🎉 Livraison offerte ce week-end !</div>
-      )}
+      <div
+        className={`banner${showBanner ? ' banner--visible' : ''}`}
+        aria-hidden={!showBanner}
+      >
+        🎉 Livraison offerte ce week-end !
+      </div>
 
       <h1>CycloShop</h1>
 
-      {/* Problème 1 (LCP/CLS) : pas de width/height ni d'aspect-ratio */}
-      <img src={HERO} alt="Vélo électrique pliable" />
+      {/* CLS #1 : dimensions explicites → espace réservé avant le chargement */}
+      <img
+        src={HERO}
+        alt="Vélo électrique pliable"
+        width={800}
+        height={400}
+        style={{ aspectRatio: '800 / 400', width: '100%', height: 'auto' }}
+      />
 
       <p>Le vélo électrique pliable le plus vendu de la boutique.</p>
 
-      <button onClick={calculerPoints}>Calculer mes points fidélité</button>
-      {points !== null && <p>Tu as {points} points fidélité.</p>}
+      <button onClick={calculerPoints} disabled={enCours}>
+        {enCours ? 'Calcul en cours…' : 'Calculer mes points fidélité'}
+      </button>
+      <p aria-live="polite">
+        {points !== null && !enCours ? `Tu as ${points} points fidélité.` : ''}
+      </p>
     </div>
   )
 }
